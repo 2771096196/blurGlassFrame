@@ -25,7 +25,8 @@ def show_parameter_controls():
     # ---------- 背景 ----------
     with tab_bg:
         background_enabled = st.checkbox("启用毛玻璃背景", value=True)
-        background_scale = st.slider("背景放大倍数", 1.0, 3.0, 1.2, 0.1)
+        # 放大倍数范围改为 1.0 ~ 5.0，步长 0.05
+        background_scale = st.slider("背景放大倍数", 1.0, 5.0, 1.2, 0.05)
         background_blur = st.slider("背景模糊半径", 0, 100, 20)
         params["background_enabled"] = background_enabled
         params["background_scale"] = background_scale
