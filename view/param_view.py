@@ -1,72 +1,195 @@
 import math
 import streamlit as st
 
+# -------- 默认参数表 --------
+DEFAULTS = {
+    "background_enabled": True,
+    "background_scale": 1.20,
+    "background_blur": 20,
+    "shadow_enabled": True,
+    "shadow_spread": 16,
+    "shadow_blur": 30,
+    "shadow_opacity": 0.72,
+    "shadow_offset_x": 10,
+    "shadow_offset_y": 10,
+    "corner_radius_pct": 0,
+    "margin_all": 40,
+    "margin_top": 40,
+    "margin_bottom": 40,
+    "margin_left": 40,
+    "margin_right": 40,
+    "offset_unit": "px",
+    "offset_x_val": 0,
+    "offset_y_val": 0,
+    "shadow_link": True,
+    "ratio": None,
+}
+
+
+def _reset(keys):
+    """把给定 keys 重置成 DEFAULTS"""
+    for k in keys:
+        st.session_state[k] = DEFAULTS[k]
+
 
 def show_parameter_controls():
-    """展示所有可调参数，返回 dict。"""
+    """
+    渲染所有控件并返回参数 dict。
+    默认值写在 DEFAULTS 中，支持“恢复默认”按钮。
+    """
 
     # ---------- 输出比例 ----------
-    ratio_opt = st.selectbox("输出画面比例",
-                             ["原图比例", "9:16 竖屏", "4:5 竖屏"], 0)
-    ratio_map = {"9:16 竖屏": (9, 16), "4:5 竖屏": (4, 5)}
-    target_ratio = ratio_map.get(ratio_opt)
+    ratio_map = {
+        "原图比例": None,
+        "9:16 竖屏": (9, 16),
+        "4:5 竖屏": (4, 5),
+    }
+    ratio_label = st.selectbox(
+        "输出画面比例", list(ratio_map.keys()),
+        index=list(ratio_map.values()).index(
+            st.session_state.get("ratio", DEFAULTS["ratio"])
+        ),
+        key="ratio_label"
+    )
+    p = {}
+    p["target_ratio"] = ratio_map[ratio_label]
+    st.session_state["ratio"] = p["target_ratio"]
 
-    # ---------- 分组 ----------
+    # ---------- Tabs ----------
     tab_bg, tab_shadow, tab_fg, tab_margin, tab_offset = st.tabs(
         ["背景设置", "阴影设置", "前景设置", "边距设置", "偏移设置"]
     )
-    p = {}       # 参数收集
 
-    # === 背景 ===
+    # ========== 背景 ==========
     with tab_bg:
-        p["background_enabled"] = st.checkbox("启用毛玻璃背景", True)
-        p["background_scale"] = st.slider("背景放大倍数", 1.0, 5.0, 1.2, 0.05)
-        p["background_blur"] = st.slider("背景模糊半径", 0, 100, 20)
+        if st.button("恢复默认", key="rst_bg"):
+            _reset(["background_enabled", "background_scale", "background_blur"])
+        p["background_enabled"] = st.checkbox(
+            "启用毛玻璃背景", value=st.session_state.get("background_enabled", DEFAULTS["background_enabled"]),
+            key="background_enabled"
+        )
+        p["background_scale"] = st.slider(
+            "背景放大倍数", 1.0, 5.0,
+            value=st.session_state.get("background_scale", DEFAULTS["background_scale"]),
+            step=0.05, key="background_scale"
+        )
+        p["background_blur"] = st.slider(
+            "背景模糊半径", 0, 100,
+            value=st.session_state.get("background_blur", DEFAULTS["background_blur"]),
+            key="background_blur"
+        )
 
-    # === 阴影 ===
+    # ========== 阴影 ==========
     with tab_shadow:
-        p["shadow_enabled"] = st.checkbox("启用阴影效果", True)
-        p["shadow_spread"] = st.slider("扩散半径", 0, 100, 30)
-        p["shadow_blur"] = st.slider("阴影模糊强度", 0, 100, 30)
-        p["shadow_opacity"] = st.slider("阴影不透明度(%)", 0, 100, 50) / 100.0
+        if st.button("恢复默认", key="rst_shadow"):
+            _reset([
+                "shadow_enabled", "shadow_spread", "shadow_blur",
+                "shadow_opacity", "shadow_offset_x", "shadow_offset_y"
+            ])
+        p["shadow_enabled"] = st.checkbox(
+            "启用阴影效果",
+            value=st.session_state.get("shadow_enabled", DEFAULTS["shadow_enabled"]),
+            key="shadow_enabled",
+        )
+        p["shadow_spread"] = st.slider(
+            "扩散半径(px)", 0, 100,
+            value=st.session_state.get("shadow_spread", DEFAULTS["shadow_spread"]),
+            key="shadow_spread",
+        )
+        p["shadow_blur"] = st.slider(
+            "阴影模糊强度(px)", 0, 100,
+            value=st.session_state.get("shadow_blur", DEFAULTS["shadow_blur"]),
+            key="shadow_blur",
+        )
+        p["shadow_opacity"] = st.slider(
+            "阴影不透明度(%)", 0, 100,
+            value=int(st.session_state.get("shadow_opacity", DEFAULTS["shadow_opacity"]) * 100),
+            key="shadow_opacity_slider",
+        ) / 100.0
+        st.session_state["shadow_opacity"] = p["shadow_opacity"]
 
-        # 手动 vs 光源角度
-        mode = st.radio("阴影偏移控制", ["手动偏移", "光源角度"], horizontal=True)
+        mode = st.radio("阴影偏移控制", ["手动偏移", "光源角度"],
+                        horizontal=True, key="shadow_mode")
         if mode == "光源角度":
-            deg = st.slider("光源方向 (度)", 0, 360, 45)
+            deg = st.slider("光源方向 (°)", 0, 360, 45, key="shadow_deg")
             d = p["shadow_spread"]
             p["shadow_offset_x"] = int(d * math.cos(math.radians(deg)))
             p["shadow_offset_y"] = int(-d * math.sin(math.radians(deg)))
         else:
-            p["shadow_offset_x"] = st.slider("阴影偏移 X(px)", -300, 300, 10)
-            p["shadow_offset_y"] = st.slider("阴影偏移 Y(px)", -300, 300, 10)
+            p["shadow_offset_x"] = st.slider(
+                "阴影偏移 X(px)", -400, 400,
+                value=st.session_state.get("shadow_offset_x", DEFAULTS["shadow_offset_x"]),
+                key="shadow_offset_x",
+            )
+            p["shadow_offset_y"] = st.slider(
+                "阴影偏移 Y(px)", -400, 400,
+                value=st.session_state.get("shadow_offset_y", DEFAULTS["shadow_offset_y"]),
+                key="shadow_offset_y",
+            )
 
-    # === 前景 ===
+    # ========== 前景 ==========
     with tab_fg:
-        p["corner_radius_pct"] = st.slider("圆角半径 (%)", 0, 50, 0)
+        if st.button("恢复默认", key="rst_fg"):
+            _reset(["corner_radius_pct"])
+        p["corner_radius_pct"] = st.slider(
+            "圆角半径(%)", 0, 50,
+            value=st.session_state.get("corner_radius_pct", DEFAULTS["corner_radius_pct"]),
+            key="corner_radius_pct",
+        )
 
-    # === 边距 ===
+    # ========== 边距 ==========
     with tab_margin:
-        uni = st.slider("统一边距 (px)", 0, 400, 40)
-        adv = st.checkbox("启用独立边距")
+        if st.button("恢复默认", key="rst_margin"):
+            _reset(["margin_all", "margin_top", "margin_bottom", "margin_left", "margin_right"])
+        uni = st.slider(
+            "统一边距(px)", 0, 400,
+            value=st.session_state.get("margin_all", DEFAULTS["margin_all"]),
+            key="margin_all",
+        )
+        adv = st.checkbox("启用独立边距", key="ind_margin")
         if adv:
-            p["margin_top"] = st.slider("顶部边距 (px)", 0, 400, uni)
-            p["margin_bottom"] = st.slider("底部边距 (px)", 0, 400, uni)
-            p["margin_left"] = st.slider("左侧边距 (px)", 0, 400, uni)
-            p["margin_right"] = st.slider("右侧边距 (px)", 0, 400, uni)
+            p["margin_top"] = st.slider("顶部边距(px)", 0, 400,
+                                        value=st.session_state.get("margin_top", uni),
+                                        key="margin_top")
+            p["margin_bottom"] = st.slider("底部边距(px)", 0, 400,
+                                           value=st.session_state.get("margin_bottom", uni),
+                                           key="margin_bottom")
+            p["margin_left"] = st.slider("左侧边距(px)", 0, 400,
+                                         value=st.session_state.get("margin_left", uni),
+                                         key="margin_left")
+            p["margin_right"] = st.slider("右侧边距(px)", 0, 400,
+                                          value=st.session_state.get("margin_right", uni),
+                                          key="margin_right")
         else:
             p["margin_top"] = p["margin_bottom"] = p["margin_left"] = p["margin_right"] = uni
 
-    # === 偏移 ===
+    # ========== 偏移 ==========
     with tab_offset:
-        unit = st.radio("偏移单位", ["像素(px)", "百分比(%)"], horizontal=True)
-        p["offset_unit"] = "px" if unit == "像素(px)" else "%"
-        if unit == "像素(px)":
-            p["offset_x_val"] = st.slider("水平偏移 (px)", -400, 400, 0)
-            p["offset_y_val"] = st.slider("垂直偏移 (px)", -400, 400, 0)
+        if st.button("恢复默认", key="rst_offset"):
+            _reset(["offset_unit", "offset_x_val", "offset_y_val", "shadow_link"])
+        p["offset_unit"] = st.radio("偏移单位", ["像素(px)", "百分比(%)"],
+                                    horizontal=True,
+                                    key="offset_unit",
+                                    index=0 if st.session_state.get("offset_unit", DEFAULTS["offset_unit"]) == "px" else 1)
+        if p["offset_unit"] == "像素(px)":
+            p["offset_x_val"] = st.slider("水平偏移(px)", -400, 400,
+                                          value=st.session_state.get("offset_x_val", DEFAULTS["offset_x_val"]),
+                                          key="offset_x_val")
+            p["offset_y_val"] = st.slider("垂直偏移(px)", -400, 400,
+                                          value=st.session_state.get("offset_y_val", DEFAULTS["offset_y_val"]),
+                                          key="offset_y_val")
         else:
-            p["offset_x_val"] = st.slider("水平偏移 (%)", -50, 50, 0)
-            p["offset_y_val"] = st.slider("垂直偏移 (%)", -50, 50, 0)
+            p["offset_x_val"] = st.slider("水平偏移(%)", -50, 50,
+                                          value=st.session_state.get("offset_x_val", DEFAULTS["offset_x_val"]),
+                                          key="offset_x_val_pct")
+            p["offset_y_val"] = st.slider("垂直偏移(%)", -50, 50,
+                                          value=st.session_state.get("offset_y_val", DEFAULTS["offset_y_val"]),
+                                          key="offset_y_val_pct")
 
-    p["target_ratio"] = target_ratio
+        p["shadow_link"] = st.checkbox(
+            "阴影跟随前景偏移",
+            value=st.session_state.get("shadow_link", DEFAULTS["shadow_link"]),
+            key="shadow_link",
+        )
+
     return p

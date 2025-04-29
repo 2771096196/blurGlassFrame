@@ -1,11 +1,12 @@
 """
-背景层生成
--------------------------------------------------
-核心改进
-1. 任何情况下都保证整张画布被模糊背景完全填充
-   —— 先放大，再用 ImageOps.fit 截取居中区域。
-2. 返回的背景图为 **不透明 RGBA**，杜绝透明导致的
-   黑 / 白底问题。
+毛玻璃背景生成（仅放大背景，不改变画布尺寸）
+----------------------------------------------------------------
+核心算法
+1. 把原图放大 scale_factor 倍
+2. 把放大后的图像 **随机 / 中心** 裁剪到 output_size
+   —— 为避免看不到变化，这里采用“中心裁剪”。
+   用户拖动放大倍数时，毛玻璃纹理会呈现显著放大/缩小效果，
+   但画布大小、前景位置完全不受影响。
 """
 
 import math
@@ -19,31 +20,34 @@ def create_blur_background(
     blur_radius: int = 10,
 ):
     """
-    original_img : PIL.Image (任意模式)
-    output_size  : (width, height) —— 目标画布大小
-    scale_factor : 用户希望的放大倍数 (1.0~5.0)
-    blur_radius  : 高斯模糊半径
-    返回值       : RGBA 模式、与 output_size 相同的背景层
+    original_img : PIL.Image
+    output_size  : (width, height) → 画布固定大小
+    scale_factor : 背景放大倍数 (1.0 – 5.0)
+    blur_radius  : 模糊半径
     """
     out_w, out_h = output_size
-    base = original_img.convert("RGB")          # 确保无透明
-    orig_w, orig_h = base.size
+    base = original_img.convert("RGB")    # 保证无 alpha
+    ow, oh = base.size
 
-    # 至少要覆盖整张画布
-    needed_scale = max(out_w / orig_w, out_h / orig_h)
-    scale = max(scale_factor, needed_scale)     # 取更大的那个
+    # ------ 1. 放大 ------
+    # 至少等于需求以免出现黑边
+    min_scale = max(out_w / ow, out_h / oh)
+    scale = max(scale_factor, min_scale)
 
-    # 先按 scale 放大
-    new_size = (math.ceil(orig_w * scale), math.ceil(orig_h * scale))
-    enlarged = base.resize(new_size, Image.LANCZOS)
+    enlarged = base.resize(
+        (math.ceil(ow * scale), math.ceil(oh * scale)),
+        Image.LANCZOS,
+    )
 
-    # 再裁剪 / 缩放到精确画布尺寸（保证全覆盖、居中）
-    fitted = ImageOps.fit(enlarged, (out_w, out_h), Image.LANCZOS, centering=(0.5, 0.5))
+    # ------ 2. 中心裁剪到固定画布 ------
+    bg_core = ImageOps.fit(
+        enlarged, (out_w, out_h),
+        method=Image.LANCZOS,
+        centering=(0.5, 0.5)              # 中心
+    )
 
-    # 模糊
+    # ------ 3. 模糊 ------
     if blur_radius > 0:
-        fitted = fitted.filter(ImageFilter.GaussianBlur(blur_radius))
+        bg_core = bg_core.filter(ImageFilter.GaussianBlur(blur_radius))
 
-    # 转 RGBA（完全不透明，α=255），避免透明导致的黑白底
-    bg_layer = fitted.convert("RGBA")
-    return bg_layer
+    return bg_core.convert("RGBA")
