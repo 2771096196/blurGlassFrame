@@ -2,71 +2,95 @@ from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 from model import background, shadow, foreground
 
-# ---------- 工具函数 ----------
+# --- 工具函数 (_canvas_size, _offset_px 保持不变，使用上一轮修正后的版本) ---
 def _canvas_size(ow, oh, p):
     """根据四边边距和目标比例计算画布尺寸 & 前景基线位置（不含安全边距）。"""
-    # 计算边距的像素值（支持百分比单位）
-    if p.get("margin_unit", "px") != "px":
-        l = int(p["margin_left"] / 100 * ow)
-        r = int(p["margin_right"] / 100 * ow)
-        t = int(p["margin_top"] / 100 * oh)
-        b = int(p["margin_bottom"] / 100 * oh)
+    is_px_margin = p.get("margin_unit", "像素(px)") == "像素(px)"
+    use_independent = p.get("ind_margin", False)
+    if use_independent:
+        if is_px_margin:
+            l, r = p.get("margin_left", 0), p.get("margin_right", 0)
+            t, b = p.get("margin_top", 0), p.get("margin_bottom", 0)
+        else:
+            l = int(p.get("margin_left_pct", 0) / 100 * ow)
+            r = int(p.get("margin_right_pct", 0) / 100 * ow)
+            t = int(p.get("margin_top_pct", 0) / 100 * oh)
+            b = int(p.get("margin_bottom_pct", 0) / 100 * oh)
     else:
-        l, r = p["margin_left"], p["margin_right"]
-        t, b = p["margin_top"], p["margin_bottom"]
-    base_w, base_h = ow + l + r, oh + t + b
+        if is_px_margin:
+            margin_all = p.get("margin_all", 0)
+            l = r = t = b = margin_all
+        else:
+            margin_all_pct = p.get("margin_all_pct", 0)
+            l = r = int(margin_all_pct / 100 * ow)
+            t = b = int(margin_all_pct / 100 * oh)
+    base_w = ow + l + r
+    base_h = oh + t + b
     ratio = p.get("target_ratio")
     if ratio:
         rw, rh = ratio
         tar = rw / rh
-        cur = base_w / base_h
-        if cur > tar:  # 偏宽 → 扩高
-            canvas_w, canvas_h = base_w, int(base_w / tar)
-            left_m, top_m = l, t + (canvas_h - base_h) // 2
-        elif cur < tar:  # 偏高 → 扩宽
-            canvas_h, canvas_w = base_h, int(base_h * tar)
-            left_m, top_m = l + (canvas_w - base_w) // 2, t
+        cur = base_w / base_h if base_h > 0 else tar
+        if cur > tar:
+            canvas_w = base_w
+            canvas_h = int(base_w / tar) if tar > 0 else base_h
+            base_x = l
+            base_y = t + (canvas_h - base_h) // 2
+        elif cur < tar:
+            canvas_h = base_h
+            canvas_w = int(base_h * tar)
+            base_x = l + (canvas_w - base_w) // 2
+            base_y = t
         else:
             canvas_w, canvas_h = base_w, base_h
-            left_m, top_m = l, t
+            base_x, base_y = l, t
     else:
         canvas_w, canvas_h = base_w, base_h
-        left_m, top_m = l, t
-    return canvas_w, canvas_h, left_m, top_m
+        base_x, base_y = l, t
+    return canvas_w, canvas_h, base_x, base_y
 
 def _offset_px(cw, ch, p):
-    """根据偏移单位获取像素偏移量。"""
-    if p.get("offset_unit", "px") == "px":
-        return p["offset_x_val"], p["offset_y_val"]
-    # 百分比偏移：按画布尺寸转换为像素
-    return int(p["offset_x_val"] / 100 * cw), int(p["offset_y_val"] / 100 * ch)
+    """根据偏移单位 ("像素(px)" 或 "百分比(%)") 获取像素偏移量。"""
+    is_px_offset = p.get("offset_unit", "像素(px)") == "像素(px)"
+    if is_px_offset:
+        return p.get("offset_x_val", 0), p.get("offset_y_val", 0)
+    else:
+        off_x_pct = p.get("offset_x_val_pct", 0)
+        off_y_pct = p.get("offset_y_val_pct", 0)
+        return int(off_x_pct / 100 * cw), int(off_y_pct / 100 * ch)
+
 
 # ---------- 单张图像处理 ----------
 def process_single_image(img, p):
+    """处理单张图片，应用所有效果。"""
     ow, oh = img.size
-    # 计算画布尺寸和前景起始位置
     canvas_w, canvas_h, base_x, base_y = _canvas_size(ow, oh, p)
-    # 计算安全边距（阴影向外扩散的最大距离）
     pad = 0
     if p.get("shadow_enabled"):
-        if p.get("shadow_unit", "px") != "px":
-            pad = int(p["shadow_spread"] / 100 * min(ow, oh) + p["shadow_blur"] / 100 * min(ow, oh))
+        is_px_shadow = p.get("shadow_unit", "像素(px)") == "像素(px)"
+        if is_px_shadow:
+             spread = p.get("shadow_spread", 0)
+             blur = p.get("shadow_blur", 0)
         else:
-            pad = p["shadow_spread"] + p["shadow_blur"]
-    full_w, full_h = canvas_w + 2 * pad, canvas_h + 2 * pad
+             spread = int(p.get("shadow_spread_pct", 0) / 100 * min(ow, oh))
+             blur = int(p.get("shadow_blur_pct", 0) / 100 * min(ow, oh))
+        pad = max(0, spread + blur)
+    full_w = canvas_w + 2 * pad
+    full_h = canvas_h + 2 * pad
 
     # -------- 背景层 --------
+    bg_core = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     if p.get("background_enabled"):
-        # 放大并模糊原图作为背景（裁剪至画布大小）
+        # *** 调用 background.create_blur_background 时传递蒙版不透明度 ***
         bg_core = background.create_blur_background(
-            img,
-            (canvas_w, canvas_h),
-            scale_factor=p["background_scale"],
-            blur_radius=p["background_blur"],
+            original_img=img,
+            output_size=(canvas_w, canvas_h),
+            scale_factor=p.get("background_scale", 1.0),
+            blur_radius=p.get("background_blur", 0),
+            mask_type=p.get("background_mask", "无"),
+            mask_opacity=p.get("background_mask_opacity", 40) # 传递不透明度
         )
-    else:
-        bg_core = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    # 将背景放置到包含安全边距的画布中央
+
     bg = Image.new("RGBA", (full_w, full_h), (0, 0, 0, 0))
     bg.paste(bg_core, (pad, pad))
 
@@ -75,56 +99,63 @@ def process_single_image(img, p):
     fg_x = pad + base_x + off_x
     fg_y = pad + base_y + off_y
 
-    # -------- 阴影偏移（考虑前景和边距联动） --------
-    # 将阴影偏移值转换为像素
-    if p.get("shadow_unit", "px") != "px":
-        base_sh_x = int(p["shadow_offset_x"] / 100 * canvas_w)
-        base_sh_y = int(p["shadow_offset_y"] / 100 * canvas_h)
+    # -------- 阴影偏移（考虑联动）--------
+    is_px_shadow = p.get("shadow_unit", "像素(px)") == "像素(px)"
+    if is_px_shadow:
+        base_sh_x = p.get("shadow_offset_x", 0)
+        base_sh_y = p.get("shadow_offset_y", 0)
     else:
-        base_sh_x = p["shadow_offset_x"]
-        base_sh_y = p["shadow_offset_y"]
-    # 前景偏移联动阴影偏移
+        base_sh_x = int(p.get("shadow_offset_x_pct", 0) / 100 * canvas_w)
+        base_sh_y = int(p.get("shadow_offset_y_pct", 0) / 100 * canvas_h)
     sh_off_x = base_sh_x + (off_x if p.get("shadow_link") else 0)
     sh_off_y = base_sh_y + (off_y if p.get("shadow_link") else 0)
-    # 边距变化联动阴影偏移：按左右、上下边距差额调整
     if p.get("shadow_follow_margin"):
-        if p.get("margin_unit", "px") != "px":
-            l = int(p["margin_left"] / 100 * ow)
-            r = int(p["margin_right"] / 100 * ow)
-            t = int(p["margin_top"] / 100 * oh)
-            b = int(p["margin_bottom"] / 100 * oh)
+        is_px_margin = p.get("margin_unit", "像素(px)") == "像素(px)"
+        use_independent = p.get("ind_margin", False)
+        if use_independent:
+            if is_px_margin:
+                l_px, r_px = p.get("margin_left", 0), p.get("margin_right", 0)
+                t_px, b_px = p.get("margin_top", 0), p.get("margin_bottom", 0)
+            else:
+                l_px = int(p.get("margin_left_pct", 0) / 100 * ow)
+                r_px = int(p.get("margin_right_pct", 0) / 100 * ow)
+                t_px = int(p.get("margin_top_pct", 0) / 100 * oh)
+                b_px = int(p.get("margin_bottom_pct", 0) / 100 * oh)
         else:
-            l, r = p["margin_left"], p["margin_right"]
-            t, b = p["margin_top"], p["margin_bottom"]
-        sh_off_x += (l - r) // 2
-        sh_off_y += (t - b) // 2
+            if is_px_margin:
+                margin_all_px = p.get("margin_all", 0)
+                l_px = r_px = t_px = b_px = margin_all_px
+            else:
+                margin_all_pct = p.get("margin_all_pct", 0)
+                l_px = r_px = int(margin_all_pct / 100 * ow)
+                t_px = b_px = int(margin_all_pct / 100 * oh)
+        sh_off_x += (l_px - r_px) // 2
+        sh_off_y += (t_px - b_px) // 2
 
     # -------- 阴影层 --------
+    sh_layer = Image.new("RGBA", (full_w, full_h), (0, 0, 0, 0))
     if p.get("shadow_enabled"):
-        # 计算阴影扩散和模糊的像素值
-        if p.get("shadow_unit", "px") != "px":
-            spread = int(p["shadow_spread"] / 100 * min(ow, oh))
-            blur = int(p["shadow_blur"] / 100 * min(ow, oh))
+        is_px_shadow = p.get("shadow_unit", "像素(px)") == "像素(px)"
+        if is_px_shadow:
+             spread = p.get("shadow_spread", 0)
+             blur = p.get("shadow_blur", 0)
         else:
-            spread = p["shadow_spread"]
-            blur = p["shadow_blur"]
-        # 前景圆角半径像素值
-        corner_radius = int(p.get("corner_radius_pct", 0) / 100 * min(ow, oh))
+             spread = int(p.get("shadow_spread_pct", 0) / 100 * min(ow, oh))
+             blur = int(p.get("shadow_blur_pct", 0) / 100 * min(ow, oh))
+        corner_radius_px = int(p.get("corner_radius_pct", 0) / 100 * min(ow, oh))
         sh_layer = shadow.create_shadow_layer(
-            img.size,
-            (full_w, full_h),
-            corner_radius,
-            spread,
-            blur,
-            p["shadow_opacity"],
-            sh_off_x,
-            sh_off_y,
+            orig_size=img.size,
+            output_size=(full_w, full_h),
+            corner_radius=corner_radius_px,
+            spread_radius=max(0, spread),
+            blur_radius=max(0, blur),
+            opacity=p.get("shadow_opacity", 0.5),
+            offset_x=sh_off_x,
+            offset_y=sh_off_y,
         )
-    else:
-        sh_layer = Image.new("RGBA", (full_w, full_h), (0, 0, 0, 0))
 
     # -------- 前景层 --------
-    cr_px = int(p["corner_radius_pct"] / 100 * min(ow, oh))
+    cr_px = int(p.get("corner_radius_pct", 0) / 100 * min(ow, oh))
     fg_img = foreground.apply_round_corners(img, cr_px)
     fg_layer = Image.new("RGBA", (full_w, full_h), (0, 0, 0, 0))
     fg_layer.paste(fg_img, (fg_x, fg_y), fg_img)
@@ -132,11 +163,31 @@ def process_single_image(img, p):
     # -------- 图层合成与裁剪输出 --------
     merged = Image.alpha_composite(bg, sh_layer)
     merged = Image.alpha_composite(merged, fg_layer)
-    # 裁剪掉安全边距区域，得到最终输出画布图像
-    return merged.crop((pad, pad, pad + canvas_w, pad + canvas_h))
+    final_crop_box = (pad, pad, pad + canvas_w, pad + canvas_h)
+    final_crop_box = (
+        max(0, final_crop_box[0]), max(0, final_crop_box[1]),
+        min(full_w, final_crop_box[2]), min(full_h, final_crop_box[3])
+    )
+    if final_crop_box[2] > final_crop_box[0] and final_crop_box[3] > final_crop_box[1]:
+        return merged.crop(final_crop_box)
+    else:
+        return Image.new("RGBA", (canvas_w if canvas_w>0 else 1, canvas_h if canvas_h>0 else 1), (0,0,0,0))
+
 
 # ---------- 批量处理 ----------
 def process_all_images(images, params, max_workers: int = 4):
+    """使用线程池并行处理所有图像。"""
+    results = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [pool.submit(process_single_image, img, params) for img in images]
-    return [f.result() for f in futures]
+        futures = {pool.submit(process_single_image, img, params.copy()): i for i, img in enumerate(images)}
+        result_map = {}
+        for future in futures:
+            index = futures[future]
+            try:
+                result_map[index] = future.result()
+            except Exception as e:
+                print(f"Error processing image at index {index}: {e}")
+                result_map[index] = None
+        for i in range(len(images)):
+             results.append(result_map.get(i))
+    return results
