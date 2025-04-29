@@ -1,77 +1,72 @@
 import math
 import streamlit as st
 
+
 def show_parameter_controls():
-    """
-    显示参数控制区域（背景、阴影、前景、边距设置），并返回参数字典。
-    """
-    # 输出比例
-    aspect_option = st.selectbox("输出画面比例",
-                                 ["原图比例", "9:16 竖屏", "4:5 竖屏"],
-                                 index=0)
-    if aspect_option == "原图比例":
-        target_ratio = None
-    elif aspect_option == "9:16 竖屏":
-        target_ratio = (9, 16)
-    else:
-        target_ratio = (4, 5)
+    """展示所有可调参数，返回 dict。"""
 
-    # Tabs 分组
-    tab_bg, tab_shadow, tab_fg, tab_margin = st.tabs(
-        ["背景设置", "阴影设置", "前景设置", "边距设置"])
+    # ---------- 输出比例 ----------
+    ratio_opt = st.selectbox("输出画面比例",
+                             ["原图比例", "9:16 竖屏", "4:5 竖屏"], 0)
+    ratio_map = {"9:16 竖屏": (9, 16), "4:5 竖屏": (4, 5)}
+    target_ratio = ratio_map.get(ratio_opt)
 
-    params = {}
+    # ---------- 分组 ----------
+    tab_bg, tab_shadow, tab_fg, tab_margin, tab_offset = st.tabs(
+        ["背景设置", "阴影设置", "前景设置", "边距设置", "偏移设置"]
+    )
+    p = {}       # 参数收集
 
-    # ---------- 背景 ----------
+    # === 背景 ===
     with tab_bg:
-        background_enabled = st.checkbox("启用毛玻璃背景", value=True)
-        # 放大倍数范围改为 1.0 ~ 5.0，步长 0.05
-        background_scale = st.slider("背景放大倍数", 1.0, 5.0, 1.2, 0.05)
-        background_blur = st.slider("背景模糊半径", 0, 100, 20)
-        params["background_enabled"] = background_enabled
-        params["background_scale"] = background_scale
-        params["background_blur"] = background_blur
+        p["background_enabled"] = st.checkbox("启用毛玻璃背景", True)
+        p["background_scale"] = st.slider("背景放大倍数", 1.0, 5.0, 1.2, 0.05)
+        p["background_blur"] = st.slider("背景模糊半径", 0, 100, 20)
 
-    # ---------- 阴影 ----------
+    # === 阴影 ===
     with tab_shadow:
-        shadow_enabled = st.checkbox("启用阴影效果", value=True)
-        shadow_spread = st.slider("扩散半径", 0, 100, 30)
-        shadow_blur = st.slider("阴影模糊强度", 0, 100, 30)
-        shadow_opacity_pct = st.slider("阴影不透明度(%)", 0, 100, 50)
-        shadow_opacity = shadow_opacity_pct / 100.0
+        p["shadow_enabled"] = st.checkbox("启用阴影效果", True)
+        p["shadow_spread"] = st.slider("扩散半径", 0, 100, 30)
+        p["shadow_blur"] = st.slider("阴影模糊强度", 0, 100, 30)
+        p["shadow_opacity"] = st.slider("阴影不透明度(%)", 0, 100, 50) / 100.0
 
-        direction_mode = st.radio("阴影偏移控制", ["手动偏移", "光源角度"],
-                                  index=0, horizontal=True)
-        if direction_mode == "手动偏移":
-            shadow_offset_x = st.slider("阴影偏移 X", -200, 200, 10)
-            shadow_offset_y = st.slider("阴影偏移 Y", -200, 200, 10)
+        # 手动 vs 光源角度
+        mode = st.radio("阴影偏移控制", ["手动偏移", "光源角度"], horizontal=True)
+        if mode == "光源角度":
+            deg = st.slider("光源方向 (度)", 0, 360, 45)
+            d = p["shadow_spread"]
+            p["shadow_offset_x"] = int(d * math.cos(math.radians(deg)))
+            p["shadow_offset_y"] = int(-d * math.sin(math.radians(deg)))
         else:
-            shadow_angle = st.slider("光源方向 (角度)", 0, 360, 45)
-            distance = shadow_spread
-            rad = math.radians(shadow_angle)
-            shadow_offset_x = int(distance * math.cos(rad))
-            shadow_offset_y = -int(distance * math.sin(rad))
+            p["shadow_offset_x"] = st.slider("阴影偏移 X(px)", -300, 300, 10)
+            p["shadow_offset_y"] = st.slider("阴影偏移 Y(px)", -300, 300, 10)
 
-        params.update({
-            "shadow_enabled": shadow_enabled,
-            "shadow_spread": shadow_spread,
-            "shadow_blur": shadow_blur,
-            "shadow_opacity": shadow_opacity,
-            "shadow_offset_x": shadow_offset_x,
-            "shadow_offset_y": shadow_offset_y
-        })
-
-    # ---------- 前景 ----------
+    # === 前景 ===
     with tab_fg:
-        corner_pct = st.slider("圆角半径 (%)", 0, 50, 0,
-                               help="相对于图片短边的百分比，50%≈圆形")
-        params["corner_radius_pct"] = corner_pct
+        p["corner_radius_pct"] = st.slider("圆角半径 (%)", 0, 50, 0)
 
-    # ---------- 边距 ----------
+    # === 边距 ===
     with tab_margin:
-        frame_margin = st.slider("边距 (px)", 0, 400, 40,
-                                 help="中央高清图与毛玻璃背景边缘的距离")
-        params["frame_margin"] = frame_margin
+        uni = st.slider("统一边距 (px)", 0, 400, 40)
+        adv = st.checkbox("启用独立边距")
+        if adv:
+            p["margin_top"] = st.slider("顶部边距 (px)", 0, 400, uni)
+            p["margin_bottom"] = st.slider("底部边距 (px)", 0, 400, uni)
+            p["margin_left"] = st.slider("左侧边距 (px)", 0, 400, uni)
+            p["margin_right"] = st.slider("右侧边距 (px)", 0, 400, uni)
+        else:
+            p["margin_top"] = p["margin_bottom"] = p["margin_left"] = p["margin_right"] = uni
 
-    params["target_ratio"] = target_ratio
-    return params
+    # === 偏移 ===
+    with tab_offset:
+        unit = st.radio("偏移单位", ["像素(px)", "百分比(%)"], horizontal=True)
+        p["offset_unit"] = "px" if unit == "像素(px)" else "%"
+        if unit == "像素(px)":
+            p["offset_x_val"] = st.slider("水平偏移 (px)", -400, 400, 0)
+            p["offset_y_val"] = st.slider("垂直偏移 (px)", -400, 400, 0)
+        else:
+            p["offset_x_val"] = st.slider("水平偏移 (%)", -50, 50, 0)
+            p["offset_y_val"] = st.slider("垂直偏移 (%)", -50, 50, 0)
+
+    p["target_ratio"] = target_ratio
+    return p

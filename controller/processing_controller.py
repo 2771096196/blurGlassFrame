@@ -1,10 +1,7 @@
 """
-业务控制层：单图 / 多图处理
--------------------------------------------------
-改动：
-1. 批量处理 process_all_images() 采用 ThreadPoolExecutor 并行，
-   默认并发 4 个工作线程，可通过参数 max_workers 调节。
-2. 单图流程保持上一版本（含安全画布防截断算法）。
+处理核心（单图 / 批量）
+修复：阴影 safe_pad 不再影响背景缩放
+----------------------------------------------------------------
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -12,75 +9,98 @@ from PIL import Image
 from model import background, shadow, foreground
 
 
-# ---------------- 单图处理（保持不变） ----------------
-def _build_canvas_size(base_w: int, base_h: int, params: dict):
-    safe_pad = 0
-    if params.get("shadow_enabled", False):
-        safe_pad = params.get("shadow_spread", 0) + params.get("shadow_blur", 0)
-    return base_w + 2 * safe_pad, base_h + 2 * safe_pad, safe_pad
+# ---------- 工具函数 ----------
 
 
-def process_single_image(image, params: dict):
-    base_out_w, base_out_h = params["output_size"]
-    canvas_w, canvas_h, pad = _build_canvas_size(base_out_w, base_out_h, params)
+def _calc_canvas_size(orig_w, orig_h, p):
+    """边距 + 比例 → 输出画布尺寸 (canvas_w, canvas_h) & 左上边距偏移。"""
+    l, r = p["margin_left"], p["margin_right"]
+    t, b = p["margin_top"], p["margin_bottom"]
+    base_w, base_h = orig_w + l + r, orig_h + t + b
 
-    # 背景
-    if params.get("background_enabled", True):
-        bg_layer = background.create_blur_background(
-            image,
-            (canvas_w, canvas_h),
-            params.get("background_scale", 1.2),
-            params.get("background_blur", 20),
+    ratio = p.get("target_ratio")
+    if ratio:
+        rw, rh = ratio
+        tar = rw / rh
+        cur = base_w / base_h
+        if cur > tar:
+            return base_w, int(base_w / tar), l, t + (int(base_w / tar) - base_h) // 2
+        elif cur < tar:
+            return int(base_h * tar), base_h, l + (int(base_h * tar) - base_w) // 2, t
+    # 无比例变换
+    return base_w, base_h, l, t
+
+
+def _safe_pad(p):
+    return p["shadow_spread"] + p["shadow_blur"] if p.get("shadow_enabled") else 0
+
+
+def _offset_pixels(cw, ch, p):
+    if p["offset_unit"] == "px":
+        return p["offset_x_val"], p["offset_y_val"]
+    return int(p["offset_x_val"] / 100 * cw), int(p["offset_y_val"] / 100 * ch)
+
+
+# ---------- 单张处理 ----------
+
+
+def process_single_image(img, p):
+    ow, oh = img.size
+    canvas_w, canvas_h, margin_x, margin_y = _calc_canvas_size(ow, oh, p)
+    pad = _safe_pad(p)
+
+    # ----- 1. 构建“总画布” -----
+    full_w, full_h = canvas_w + 2 * pad, canvas_h + 2 * pad
+
+    # ----- 2. 背景：只生成 canvas 大小，然后贴到 full 画布 -----
+    bg_core = background.create_blur_background(
+        img,
+        (canvas_w, canvas_h),
+        scale_factor=p["background_scale"],
+        blur_radius=p["background_blur"],
+    ) if p.get("background_enabled") else Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+
+    bg = Image.new("RGBA", (full_w, full_h), (0, 0, 0, 0))
+    bg.paste(bg_core, (pad, pad))
+
+    # ----- 3. 阴影 -----
+    if p.get("shadow_enabled"):
+        sh = shadow.create_shadow_layer(
+            img.size,
+            (full_w, full_h),
+            p.get("corner_radius", 0),
+            p["shadow_spread"],
+            p["shadow_blur"],
+            p["shadow_opacity"],
+            p["shadow_offset_x"],
+            p["shadow_offset_y"],
         )
     else:
-        bg_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        sh = Image.new("RGBA", (full_w, full_h), (0, 0, 0, 0))
 
-    # 阴影
-    if params.get("shadow_enabled", True):
-        shadow_layer = shadow.create_shadow_layer(
-            image.size,
-            (canvas_w, canvas_h),
-            params.get("corner_radius", 0),
-            params.get("shadow_spread", 30),
-            params.get("shadow_blur", 30),
-            params.get("shadow_opacity", 0.5),
-            params.get("shadow_offset_x", 0),
-            params.get("shadow_offset_y", 0),
-        )
-    else:
-        shadow_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    # ----- 4. 前景 -----
+    cr_px = int(p["corner_radius_pct"] / 100 * min(ow, oh))
+    fg_img = foreground.apply_round_corners(img, cr_px)
 
-    # 前景
-    pct = params.get("corner_radius_pct")
-    if pct is not None:
-        corner_px = int(pct / 100.0 * min(image.size))
-        corner_px = min(corner_px, min(image.size) // 2)
-    else:
-        corner_px = params.get("corner_radius", 0)
+    # 计算前景左上角
+    off_x, off_y = _offset_pixels(canvas_w, canvas_h, p)
+    pos_x = pad + margin_x + off_x
+    pos_y = pad + margin_y + off_y
 
-    fg_img = foreground.apply_round_corners(image, corner_px)
-    fg_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    fg_layer.paste(
-        fg_img, ((canvas_w - image.width) // 2, (canvas_h - image.height) // 2), fg_img
-    )
+    fg_layer = Image.new("RGBA", (full_w, full_h), (0, 0, 0, 0))
+    fg_layer.paste(fg_img, (pos_x, pos_y), fg_img)
 
-    # 合成
-    merged = Image.alpha_composite(bg_layer, shadow_layer)
+    # ----- 5. 合成 & 裁剪 -----
+    merged = Image.alpha_composite(bg, sh)
     merged = Image.alpha_composite(merged, fg_layer)
-
-    # 裁剪回最终尺寸
-    final = merged.crop((pad, pad, pad + base_out_w, pad + base_out_h))
-    return final
+    # 把安全边距裁掉
+    return merged.crop((pad, pad, pad + canvas_w, pad + canvas_h))
 
 
-# ---------------- 批量并行处理 ----------------
-def process_all_images(images, params: dict, max_workers: int = 4):
-    """
-    并行处理多张图片。
-    - images: PIL.Image 列表
-    - params: 公共参数
-    - max_workers: 线程数量（默认 4）
-    """
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [pool.submit(process_single_image, img, params) for img in images]
-        return [f.result() for f in futures]
+# ---------- 批量并行 ----------
+
+
+def process_all_images(images, params, max_workers=4):
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = [ex.submit(process_single_image, im, params) for im in images]
+    return [f.result() for f in futs]
