@@ -70,7 +70,7 @@ streamlit run app.py
 ```
 
 （或者直接使用免环境安装的本地包通过网盘分享的文件：blurGlassFrame.zip
-链接: https://pan.baidu.com/s/1SV2cB2Wrx9-6XocMC6nvtQ?pwd=1234 提取码: 1234 
-，双击点击start.bat即可启动）
+链接: https://pan.baidu.com/s/19ZuTEQW4h74G0IxTu4dgvg?pwd=1234 提取码: 1234 ，
+解压后，双击点击start.bat即可启动）
 
 ![image-20250508031448301](./static/demo5.png)
