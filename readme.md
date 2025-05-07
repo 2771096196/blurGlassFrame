@@ -1,6 +1,7 @@
 # 毛玻璃相框🖼
 
-🖼本项目是一个基于 Streamlit 和 Pillow 库开发的Web应用，旨在简化图片处理流程，特别是为适应抖音、小红书、B站等平台竖屏内容的需求。提供了一个便捷的工具，可以批量上传图片，通过直观界面调整各种参数，实现以下效果：（直接使用免环境安装的本地包通过网盘分享的文件：blurGlassFrame.zip https://pan.baidu.com/s/1SV2cB2Wrx9-6XocMC6nvtQ?pwd=1234 提取码: 1234 ）
+🖼本项目是一个基于 Streamlit 和 Pillow 库开发的Web应用，旨在简化图片处理流程，特别是为适应抖音、小红书、B站等平台竖屏内容的需求。提供了一个便捷的工具，可以批量上传图片，通过直观界面调整各种参数，实现以下效果：（直接使用免环境安装的本地包通过网盘分享的文件：blurGlassFrame.zip 通过网盘分享的文件：blurGlassFrame.zip等2个文件
+链接: https://pan.baidu.com/s/144frCz5kZCW1NW73tUdc6g?pwd=1234 提取码: 1234 ）
 
 ![image-20250508031448301](./static/demo1.png)
 
@@ -70,7 +71,7 @@ streamlit run app.py
 ```
 
 （或者直接使用免环境安装的本地包通过网盘分享的文件：blurGlassFrame.zip
-链接: https://pan.baidu.com/s/19ZuTEQW4h74G0IxTu4dgvg?pwd=1234 提取码: 1234 ，
+链接: https://pan.baidu.com/s/144frCz5kZCW1NW73tUdc6g?pwd=1234 提取码: 1234 ，
 解压后，双击点击start.bat即可启动）
 
 ![image-20250508031448301](./static/demo5.png)
