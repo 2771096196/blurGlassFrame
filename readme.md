@@ -58,3 +58,19 @@
   - **安装依赖**: 在项目根目录执行 `pip install -r requirements.txt` 安装所需库。
   - **启动应用**: 在项目根目录执行 `streamlit run app.py`或点击`Start.bat`脚本，应用将在浏览器中打开（http://localhost:8501/）；
 
+```shell
+# 第一次环境安装
+conda create python=3.9 -n blurGlassFrame
+
+conda activate blurGlassFrame
+
+pip install -r requirements.txt
+
+# （后续）启动
+conda activate blurGlassFrame
+
+streamlit run app.py
+
+```
+
+（或者直接使用免环境安装的本地包，点击start.bat即可启动：）
